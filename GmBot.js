@@ -20,32 +20,34 @@ const quoteLogPath = './usedQuotes.txt';
 
 const fetchPrices = async () => {
   try {
-    const res = await axios.get('https://api.coingecko.com/api/v3/simple/price', {
+    const res = await axios.get('https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest', {
+      headers: {
+        'X-CMC_PRO_API_KEY': process.env.CMC_API_KEY
+      },
       params: {
-        ids: 'bitcoin,ethereum,solana',
-        vs_currencies: 'usd',
-        include_24hr_change: 'true'
+        symbol: 'BTC,ETH,SOL',
+        convert: 'USD'
       }
     });
 
-    const data = res.data;
+    const data = res.data.data;
 
     return {
       BTC: {
-        price: data.bitcoin.usd,
-        change: data.bitcoin.usd_24h_change
+        price: data.BTC.quote.USD.price,
+        change: data.BTC.quote.USD.percent_change_24h
       },
       ETH: {
-        price: data.ethereum.usd,
-        change: data.ethereum.usd_24h_change
+        price: data.ETH.quote.USD.price,
+        change: data.ETH.quote.USD.percent_change_24h
       },
       SOL: {
-        price: data.solana.usd,
-        change: data.solana.usd_24h_change
+        price: data.SOL.quote.USD.price,
+        change: data.SOL.quote.USD.percent_change_24h
       }
     };
   } catch (err) {
-    console.error("❌ Error fetching prices from CoinGecko:", err.message);
+    console.error("❌ Error fetching prices from CoinMarketCap:", err.message);
     return {
       BTC: { price: 0, change: 0 },
       ETH: { price: 0, change: 0 },
@@ -125,7 +127,7 @@ const startBot = async () => {
     }
   });
 
-  // ☀️ Morning Alert – 9:00 AM IST (3:30 AM UTC)
+  // ☀️ Morning Alert – 9:15 AM IST (3:45 AM UTC)
   cron.schedule('45 3 * * *', async () => {
     try {
       const prices = await fetchPrices();
@@ -173,7 +175,7 @@ const startBot = async () => {
     }
   });
 
-  // 🌆 Evening Alert – 6:30 PM IST (13:00 UTC)
+  // 🌆 Evening Alert – 8:15 PM IST (2:45 PM UTC)
   cron.schedule('45 14 * * *', async () => {
     try {
       const prices = await fetchPrices();

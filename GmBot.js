@@ -126,7 +126,7 @@ const startBot = async () => {
   });
 
   // ☀️ Morning Alert – 9:00 AM IST (3:30 AM UTC)
-  cron.schedule('*/2 * * * *', async () => {
+  cron.schedule('45 3 * * *', async () => {
     try {
       const prices = await fetchPrices();
       const fng = await fetchFearGreedIndex();
@@ -174,7 +174,7 @@ const startBot = async () => {
   });
 
   // 🌆 Evening Alert – 6:30 PM IST (13:00 UTC)
-  cron.schedule('*/2 * * * *', async () => {
+  cron.schedule('45 14 * * *', async () => {
     try {
       const prices = await fetchPrices();
       const fng = await fetchFearGreedIndex();

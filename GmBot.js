@@ -1,13 +1,5 @@
 const fs = require('fs');
 const unzipper = require('unzipper');
-
-// 🔓 Unzip auth_info from Railway ENV
-if (process.env.AUTH_ZIP && !fs.existsSync('./auth_info')) {
-  const buffer = Buffer.from(process.env.AUTH_ZIP, 'base64');
-  fs.writeFileSync('auth_info.zip', buffer);
-  fs.createReadStream('auth_info.zip').pipe(unzipper.Extract({ path: '.' }));
-}
-
 const axios = require('axios');
 const qrcode = require('qrcode-terminal');
 const cron = require('node-cron');
@@ -15,10 +7,45 @@ const express = require('express');
 const { default: makeWASocket, useMultiFileAuthState } = require('@whiskeysockets/baileys');
 require('dotenv').config();
 
+// 🔓 Unzip auth_info from Railway ENV
+if (process.env.AUTH_ZIP && !fs.existsSync('./auth_info')) {
+  try {
+    const buffer = Buffer.from(process.env.AUTH_ZIP, 'base64');
+    fs.writeFileSync('auth_info.zip', buffer);
+    fs.createReadStream('auth_info.zip')
+      .pipe(unzipper.Extract({ path: '.' }))
+      .on('error', (err) => {
+        console.error('❌ Error unzipping auth_info:', err.message);
+      })
+      .on('finish', () => {
+        console.log('✅ auth_info unzipped successfully');
+        if (!fs.existsSync('./auth_info')) {
+          console.error('❌ auth_info directory not found after unzipping');
+        }
+      });
+  } catch (err) {
+    console.error('❌ Error processing AUTH_ZIP:', err.message);
+  }
+} else if (!process.env.AUTH_ZIP) {
+  console.warn('⚠️ AUTH_ZIP environment variable not set');
+} else {
+  console.log('✅ auth_info directory already exists');
+}
+
 const groupJids = ['120363399532849287@g.us'];
 const quoteLogPath = './usedQuotes.txt';
 
+// Cache for API responses
+let priceCache = null;
+let fngCache = null;
+let lastCacheTime = 0;
+const cacheDuration = 5 * 60 * 1000; // 5 minutes
+
 const fetchPrices = async () => {
+  if (priceCache && Date.now() - lastCacheTime < cacheDuration) {
+    console.log('📈 Using cached prices');
+    return priceCache;
+  }
   try {
     const res = await axios.get('https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest', {
       headers: {
@@ -29,44 +56,34 @@ const fetchPrices = async () => {
         convert: 'USD'
       }
     });
-
-    const data = res.data.data;
-
-    return {
-      BTC: {
-        price: data.BTC.quote.USD.price,
-        change: data.BTC.quote.USD.percent_change_24h
-      },
-      ETH: {
-        price: data.ETH.quote.USD.price,
-        change: data.ETH.quote.USD.percent_change_24h
-      },
-      SOL: {
-        price: data.SOL.quote.USD.price,
-        change: data.SOL.quote.USD.percent_change_24h
-      }
+    priceCache = {
+      BTC: { price: res.data.data.BTC.quote.USD.price, change: res.data.data.BTC.quote.USD.percent_change_24h },
+      ETH: { price: res.data.data.ETH.quote.USD.price, change: res.data.data.ETH.quote.USD.percent_change_24h },
+      SOL: { price: res.data.data.SOL.quote.USD.price, change: res.data.data.SOL.quote.USD.percent_change_24h }
     };
+    lastCacheTime = Date.now();
+    console.log('📈 Fetched new prices');
+    return priceCache;
   } catch (err) {
-    console.error("❌ Error fetching prices from CoinMarketCap:", err.message);
-    return {
-      BTC: { price: 0, change: 0 },
-      ETH: { price: 0, change: 0 },
-      SOL: { price: 0, change: 0 }
-    };
+    console.error('❌ Error fetching prices from CoinMarketCap:', err.message);
+    return priceCache || { BTC: { price: 0, change: 0 }, ETH: { price: 0, change: 0 }, SOL: { price: 0, change: 0 } };
   }
 };
 
 const fetchFearGreedIndex = async () => {
+  if (fngCache && Date.now() - lastCacheTime < cacheDuration) {
+    console.log('📊 Using cached Fear & Greed Index');
+    return fngCache;
+  }
   try {
     const response = await axios.get('https://api.alternative.me/fng/?limit=1');
-    const data = response.data.data[0];
-    return {
-      value: data.value,
-      sentiment: data.value_classification
-    };
+    fngCache = { value: response.data.data[0].value, sentiment: response.data.data[0].value_classification };
+    lastCacheTime = Date.now();
+    console.log('📊 Fetched new Fear & Greed Index');
+    return fngCache;
   } catch (err) {
-    console.error("❌ Error fetching Fear & Greed Index:", err.message);
-    return null;
+    console.error('❌ Error fetching Fear & Greed Index:', err.message);
+    return fngCache || null;
   }
 };
 
@@ -74,7 +91,7 @@ const fetchUniqueEnglishQuote = async () => {
   try {
     const response = await axios.get('https://favqs.com/api/qotd');
     const quote = response.data.quote.body;
-    const author = response.data.quote.author || "Unknown";
+    const author = response.data.quote.author || 'Unknown';
     const quoteText = `_${quote}_\n— *${author}*`;
 
     const hash = Buffer.from(quote).toString('base64');
@@ -90,7 +107,7 @@ const fetchUniqueEnglishQuote = async () => {
     fs.writeFileSync(quoteLogPath, used.join('\n'));
     return quoteText;
   } catch (err) {
-    console.error("❌ Error fetching quote:", err.message);
+    console.error('❌ Error fetching quote:', err.message);
     return null;
   }
 };
@@ -101,14 +118,39 @@ const startBot = async () => {
 
   sock.ev.on('creds.update', saveCreds);
 
-  sock.ev.on('connection.update', (update) => {
-    const { connection, qr } = update;
-    if (qr) qrcode.generate(qr, { small: true });
-    if (connection === 'open') console.log('✅ WhatsApp connected!');
-    else if (connection === 'close') {
-      console.log('❌ Connection closed. Reconnecting...');
-      setTimeout(() => startBot(), 10000);
+  let reconnectAttempts = 0;
+  const maxReconnectAttempts = 5;
+  const maxBackoff = 60000; // 60 seconds
+
+  sock.ev.on('connection.update', async (update) => {
+    const { connection, lastDisconnect, qr } = update;
+    if (qr) {
+      console.log('📱 QR code generated');
+      qrcode.generate(qr, { small: true });
     }
+    if (connection === 'open') {
+      console.log('✅ WhatsApp connected!');
+      reconnectAttempts = 0;
+    } else if (connection === 'close') {
+      const reason = lastDisconnect?.error?.message || 'Unknown reason';
+      console.error(`❌ Connection closed. Reason: ${reason}`);
+      if (reconnectAttempts < maxReconnectAttempts) {
+        const backoff = Math.min(1000 * Math.pow(2, reconnectAttempts), maxBackoff);
+        console.log(`🔄 Reconnecting in ${backoff / 1000} seconds... (Attempt ${reconnectAttempts + 1}/${maxReconnectAttempts})`);
+        reconnectAttempts++;
+        setTimeout(() => startBot(), backoff);
+      } else {
+        console.error('❌ Max reconnection attempts reached. Please check authentication or network.');
+      }
+    }
+  });
+
+  sock.ev.on('stream.error', (error) => {
+    console.error('❌ Stream Error:', error);
+  });
+
+  sock.ws.on('error', (error) => {
+    console.error('❌ WebSocket Error:', error);
   });
 
   // 💬 Group ID Reader
@@ -219,6 +261,10 @@ startBot();
 
 const app = express();
 app.get('/', (req, res) => res.send('GmBot is running!'));
+app.get('/health', (req, res) => {
+  const status = sock.ws.readyState === 1 ? 'connected' : 'disconnected';
+  res.json({ status, uptime: process.uptime(), lastCacheTime: new Date(lastCacheTime).toISOString() });
+});
 app.listen(process.env.PORT || 3000, () => {
   console.log('🌐 Express server active to prevent Railway timeout');
 });

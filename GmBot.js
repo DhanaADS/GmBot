@@ -1,4 +1,13 @@
 const fs = require('fs');
+const unzipper = require('unzipper');
+
+// 🔓 Unzip auth_info from Railway ENV
+if (process.env.AUTH_ZIP && !fs.existsSync('./auth_info')) {
+  const buffer = Buffer.from(process.env.AUTH_ZIP, 'base64');
+  fs.writeFileSync('auth_info.zip', buffer);
+  fs.createReadStream('auth_info.zip').pipe(unzipper.Extract({ path: '.' }));
+}
+
 const axios = require('axios');
 const qrcode = require('qrcode-terminal');
 const cron = require('node-cron');
@@ -100,7 +109,7 @@ const startBot = async () => {
     }
   });
 
-  // 💬 Group ID Reader: responds to "!groupid"
+  // 💬 Group ID Reader
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify' || !messages || !messages[0]?.message) return;
 
@@ -117,7 +126,7 @@ const startBot = async () => {
   });
 
   // ☀️ Morning Alert – 9:00 AM IST (3:30 AM UTC)
-   cron.schedule('*/2 * * * *', async () => {
+  cron.schedule('*/2 * * * *', async () => {
     try {
       const prices = await fetchPrices();
       const fng = await fetchFearGreedIndex();
@@ -165,7 +174,7 @@ const startBot = async () => {
   });
 
   // 🌆 Evening Alert – 6:30 PM IST (13:00 UTC)
-   cron.schedule('*/2 * * * *', async () => {
+  cron.schedule('*/2 * * * *', async () => {
     try {
       const prices = await fetchPrices();
       const fng = await fetchFearGreedIndex();

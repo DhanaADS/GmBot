@@ -33,7 +33,6 @@ if (process.env.AUTH_ZIP && !fs.existsSync('./auth_info')) {
 }
 
 const groupJids = ['120363399532849287@g.us'];
-const quoteLogPath = './usedQuotes.txt';
 
 // Cache for API responses
 let priceCache = null;
@@ -48,13 +47,8 @@ const fetchPrices = async () => {
   }
   try {
     const res = await axios.get('https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest', {
-      headers: {
-        'X-CMC_PRO_API_KEY': process.env.CMC_API_KEY
-      },
-      params: {
-        symbol: 'BTC,ETH,SOL',
-        convert: 'USD'
-      }
+      headers: { 'X-CMC_PRO_API_KEY': process.env.CMC_API_KEY },
+      params: { symbol: 'BTC,ETH,SOL', convert: 'USD' }
     });
     priceCache = {
       BTC: { price: res.data.data.BTC.quote.USD.price, change: res.data.data.BTC.quote.USD.percent_change_24h },
@@ -66,7 +60,11 @@ const fetchPrices = async () => {
     return priceCache;
   } catch (err) {
     console.error('❌ Error fetching prices from CoinMarketCap:', err.message);
-    return priceCache || { BTC: { price: 0, change: 0 }, ETH: { price: 0, change: 0 }, SOL: { price: 0, change: 0 } };
+    return priceCache || {
+      BTC: { price: 0, change: 0 },
+      ETH: { price: 0, change: 0 },
+      SOL: { price: 0, change: 0 }
+    };
   }
 };
 
@@ -77,38 +75,16 @@ const fetchFearGreedIndex = async () => {
   }
   try {
     const response = await axios.get('https://api.alternative.me/fng/?limit=1');
-    fngCache = { value: response.data.data[0].value, sentiment: response.data.data[0].value_classification };
+    fngCache = {
+      value: response.data.data[0].value,
+      sentiment: response.data.data[0].value_classification
+    };
     lastCacheTime = Date.now();
     console.log('📊 Fetched new Fear & Greed Index');
     return fngCache;
   } catch (err) {
     console.error('❌ Error fetching Fear & Greed Index:', err.message);
     return fngCache || null;
-  }
-};
-
-const fetchUniqueEnglishQuote = async () => {
-  try {
-    const response = await axios.get('https://favqs.com/api/qotd');
-    const quote = response.data.quote.body;
-    const author = response.data.quote.author || 'Unknown';
-    const quoteText = `_${quote}_\n— *${author}*`;
-
-    const hash = Buffer.from(quote).toString('base64');
-    let used = [];
-
-    if (fs.existsSync(quoteLogPath)) {
-      used = fs.readFileSync(quoteLogPath, 'utf8').split('\n').filter(Boolean);
-    }
-
-    if (used.includes(hash)) return null;
-
-    used.push(hash);
-    fs.writeFileSync(quoteLogPath, used.join('\n'));
-    return quoteText;
-  } catch (err) {
-    console.error('❌ Error fetching quote:', err.message);
-    return null;
   }
 };
 
@@ -120,7 +96,7 @@ const startBot = async () => {
 
   let reconnectAttempts = 0;
   const maxReconnectAttempts = 5;
-  const maxBackoff = 60000; // 60 seconds
+  const maxBackoff = 60000;
 
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update;
@@ -160,7 +136,6 @@ const startBot = async () => {
     const msg = messages[0];
     const from = msg.key.remoteJid;
     console.log(`📩 Message received from: ${from}`);
-
     const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
     if (text.trim().toLowerCase() === '!groupid') {
       const replyText = `👥 This group JID is:\n*${from}*`;
@@ -170,11 +145,10 @@ const startBot = async () => {
   });
 
   // ☀️ Morning Alert – 9:15 AM IST (3:45 AM UTC)
-  cron.schedule('45 3 * * *', async () => {
+  cron.schedule('15 3 * * *', async () => {
     try {
       const prices = await fetchPrices();
       const fng = await fetchFearGreedIndex();
-      const quote = await fetchUniqueEnglishQuote();
 
       const sentimentValue = fng ? `${fng.value}%` : 'N/A';
       const sentimentLabel = fng?.sentiment || 'Neutral';
@@ -204,8 +178,7 @@ const startBot = async () => {
         `☀️ *Good Morning*\n\n` +
         trendLines.join('\n') + '\n\n' +
         `📊 Market Sentiment: ${sentimentValue} ${emoji}\n` +
-        `📅 ${dateStr}` +
-        (quote ? `\n\n💬 *Quote of the Day:*\n${quote}` : '');
+        `📅 ${dateStr}`;
 
       for (const jid of groupJids) {
         await sock.sendMessage(jid, { text: message });
@@ -218,7 +191,7 @@ const startBot = async () => {
   });
 
   // 🌆 Evening Alert – 8:15 PM IST (2:45 PM UTC)
-  cron.schedule('45 14 * * *', async () => {
+  cron.schedule('15 14 * * *', async () => {
     try {
       const prices = await fetchPrices();
       const fng = await fetchFearGreedIndex();
@@ -255,16 +228,17 @@ const startBot = async () => {
       console.error('❌ Error (Evening):', e.message);
     }
   });
+
+  // --- Express server ---
+  const app = express();
+  app.get('/', (req, res) => res.send('GmBot is running!'));
+  app.get('/health', (req, res) => {
+    const status = sock.ws.readyState === 1 ? 'connected' : 'disconnected';
+    res.json({ status, uptime: process.uptime(), lastCacheTime: new Date(lastCacheTime).toISOString() });
+  });
+  app.listen(process.env.PORT || 3000, () => {
+    console.log('🌐 Express server active to prevent Railway timeout');
+  });
 };
 
 startBot();
-
-const app = express();
-app.get('/', (req, res) => res.send('GmBot is running!'));
-app.get('/health', (req, res) => {
-  const status = sock.ws.readyState === 1 ? 'connected' : 'disconnected';
-  res.json({ status, uptime: process.uptime(), lastCacheTime: new Date(lastCacheTime).toISOString() });
-});
-app.listen(process.env.PORT || 3000, () => {
-  console.log('🌐 Express server active to prevent Railway timeout');
-});
